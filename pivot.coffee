@@ -324,6 +324,18 @@ callWithJQuery ($) ->
             @sortKeys()
             return @rowKeys
 
+        # NOTE floris: This stores all records to objects used to fill out the table with later
+        # on. It creates references to the object in :.
+        #   - the @rowTotals object
+        #   - the @colTotals object
+        #   - the @tree object
+        #     TODO floris: investigate how @tree work.
+        # When we upgrade to a newer version of pivotJS, we could instantiate the whole thing by
+        # using a different dataClass, e.g. one we wrote ourselves and ties in nicely with
+        # Angular.  All it would have to do is to add the right values to the these variables. We
+        # could leave the actual aggregation (done later on apparently).
+        # TODO floris: where does aggregation happen?
+        # TODO floris: check whether V2.1.x would also work.
         processRecord: (record) -> #this code is called in a tight loop
             colKey = []
             rowKey = []
@@ -471,6 +483,9 @@ callWithJQuery ($) ->
                         th.setAttribute("colspan",2)
                     tr.appendChild th
             for own j, colKey of colKeys #this is the tight loop
+                # NOTE floris: this is where the value is inserted.
+                # We could make an aggregator that does nothing and simply returns the value found
+                # in the @tree.
                 aggregator = pivotData.getAggregator(rowKey, colKey)
                 val = aggregator.value()
                 td = document.createElement("td")
@@ -479,6 +494,7 @@ callWithJQuery ($) ->
                 td.setAttribute("data-value", val)
                 tr.appendChild td
 
+            # NOTE floris: same here (see NOTE above)
             totalAggregator = pivotData.getAggregator(rowKey, [])
             val = totalAggregator.value()
             td = document.createElement("td")
@@ -524,7 +540,8 @@ callWithJQuery ($) ->
     ###
     Pivot Table core: create PivotData object and call Renderer on it
     ###
-
+    # NOTE floris: this is the function that is called by .pivotUI to generate the actual
+    # visualisation (e.g. the table / graph / heatmap etc.).
     $.fn.pivot = (input, opts) ->
         defaults =
             cols : []
@@ -544,8 +561,17 @@ callWithJQuery ($) ->
 
         result = null
         try
+            # NOTE floris: the pivotData contains all data to be included in the pivot
+            # visualisation later on. It does not do the calculations themselves, rather it makes
+            # all references required to do the aggregation and rendering later on (in the
+            # renderer class).
+            # In the version of pivotJS we currently use (2.0.x) this is hardcoded as
+            # 'PivotData', but the package has had an upgrade that allows the usage of arbitrary
+            # data formats.
             pivotData = new opts.dataClass(input, opts)
             try
+                # NOTE floris: it seems to leverage the renderer() to do everything.
+                # TODO: check whether renderer() does all the calculations or .dataClass()
                 result = opts.renderer(pivotData, opts.rendererOptions)
             catch e
                 console.error(e.stack) if console?
@@ -553,7 +579,7 @@ callWithJQuery ($) ->
         catch e
             console.error(e.stack) if console?
             result = $("<span>").html opts.localeStrings.computeError
-        
+        # NOTE floris: some ugly hack to remove childnodes of the last element? 
         x = this[0]
         x.removeChild(x.lastChild) while x.hasChildNodes()
         return @append result
@@ -562,7 +588,10 @@ callWithJQuery ($) ->
     ###
     Pivot Table UI: calls Pivot Table core above with options set by user
     ###
-
+    # NOTE floris: this is the function that creates all UI elements of our prototype.
+    # It also calls the .pivot() function.
+    # TODO floris: check out what .pivot() does exactly and how it separates calculation / DOM
+    # element generation.
     $.fn.pivotUI = (input, inputOpts, overwrite = false, locale="en") ->
         if not locales[locale]?
             locale = "en"
@@ -593,10 +622,16 @@ callWithJQuery ($) ->
         try
             #cache the input in some useful form
             input = PivotData.convertToArray(input)
+            # NOTE floris: these are all the possible columns to select. It simply takes all keys
+            # in the first element of the data in order to create these.
+            # We'd have to override this, so its not taken from the data itself but actually from
+            # something else (e.g. a separate request or piggy-backed on every response).
             tblCols = (k for own k of input[0])
             tblCols.push c for own c of opts.derivedAttributes when (c not in tblCols)
 
             #figure out the cardinality and some stats
+            # NOTE floris: this is used to store all unique values per 'axis' (e.g. per column)
+            # with per-value counts
             axisValues = {}
             axisValues[x] = {} for x in tblCols
 
@@ -639,7 +674,11 @@ callWithJQuery ($) ->
                 colList.addClass('pvtVertList')
             else
                 colList.addClass('pvtHorizList')
-
+            # NOTE floris [start YjQ0MW]: this appears to only add a 'filtering' feature, where
+            # you can select a subset of all elements in a column/axis/attribute to include in
+            # calculation.
+            # This is not in the prototype and offers roughly the same functionality as our global
+            # filter.
             for own i, c of shownAttributes
                 do (c) ->
                     keys = (k for k of axisValues[c])
@@ -716,9 +755,13 @@ callWithJQuery ($) ->
                     attrElem.bind "dblclick", showFilterList
 
             tr1 = $("<tr>").appendTo(uiTable)
+            # NOTE floris [end YjQ0MW]
 
             #aggregator menu and value area
-
+            # NOTE floris: we have a dependency between aggregator and selected aggregation
+            # features. This is possibly also the case in a generic pt, but we might want to
+            # include more sophisticated relationships.
+            # TODO floris: check how this i
             aggregator = $("<select>").addClass('pvtAggregator')
                 .bind "change", -> refresh() #capture reference
             for own x of opts.aggregators
@@ -767,6 +810,10 @@ callWithJQuery ($) ->
             initialRender = true
 
             #set up for refreshing
+            # NOTE floris: this is a function definition (arrow definition). It's used for
+            # callback-stuff in CS apparently.
+            # It contains the actual code being executed during calling of 'refresh()', which is a
+            # simple wrapper that does some styling (see below)
             refreshDelayed = =>
                 subopts =
                     derivedAttributes: opts.derivedAttributes
@@ -834,7 +881,10 @@ callWithJQuery ($) ->
                     for k,excludedItems of exclusions
                         return false if ""+record[k] in excludedItems
                     return true
-
+                # NOTE floris: pivotTable is the container DOM element for the rendered pivot
+                # table/graph/thingy.
+                # TODO floris: check how .pivot() works and what it takes as input. How does it
+                # relate to rendering / computing stuff???
                 pivotTable.pivot(input,subopts)
                 pivotUIOptions = $.extend opts,
                     cols: subopts.cols
